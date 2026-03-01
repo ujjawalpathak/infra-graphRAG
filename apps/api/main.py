@@ -30,6 +30,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
+
 # Load .env if present (safe even if missing)
 load_dotenv()
 
@@ -106,29 +107,77 @@ def cosine_similarities(matrix: np.ndarray, qvec: np.ndarray) -> np.ndarray:
     return (matrix @ qvec) / denom
 
 
+def mmr_select(query_vec: np.ndarray, doc_vecs: np.ndarray, top_indices: np.ndarray, k: int, lambda_mult: float = 0.7):
+    """
+    Maximal Marginal Relevance selection.
+    - query_vec: (D,)
+    - doc_vecs:  (N, D) full embeddings matrix
+    - top_indices: candidate indices already sorted by similarity to query (e.g., top 50)
+    - k: number to select
+    - lambda_mult: tradeoff between relevance (to query) and diversity (from selected)
+    """
+    selected = []
+    candidates = list(map(int, top_indices))
+
+    # Precompute query similarities for candidates
+    q_sims = {}
+    q_norm = np.linalg.norm(query_vec) + 1e-9
+    for idx in candidates:
+        dv = doc_vecs[idx]
+        q_sims[idx] = float((dv @ query_vec) / ((np.linalg.norm(dv) + 1e-9) * q_norm))
+
+    while candidates and len(selected) < k:
+        if not selected:
+            # Pick best by relevance
+            best = max(candidates, key=lambda i: q_sims[i])
+            selected.append(best)
+            candidates.remove(best)
+            continue
+
+        def score(i: int) -> float:
+            # diversity term: max similarity to already selected
+            dv = doc_vecs[i]
+            max_sim = 0.0
+            dv_norm = np.linalg.norm(dv) + 1e-9
+            for s in selected:
+                sv = doc_vecs[s]
+                sim = float((dv @ sv) / (dv_norm * (np.linalg.norm(sv) + 1e-9)))
+                if sim > max_sim:
+                    max_sim = sim
+            return lambda_mult * q_sims[i] - (1 - lambda_mult) * max_sim
+
+        best = max(candidates, key=score)
+        selected.append(best)
+        candidates.remove(best)
+
+    return selected
+
 def retrieve(query: str, k: int = 5) -> List[Dict[str, Any]]:
-    """
-    Returns top-k retrieved chunks with score + metadata + full text.
-    """
     if embs is None:
         raise RuntimeError("Embeddings not loaded (embs is None).")
 
     qv = np.asarray(model.encode(query), dtype="float32")
     sims = cosine_similarities(embs, qv)
-    top_idx = np.argsort(-sims)[:k]
 
-    out: List[Dict[str, Any]] = []
-    for i in top_idx:
+    # Instead of taking top-k directly, take a bigger candidate pool then diversify
+    candidate_pool = 40
+    top_candidates = np.argsort(-sims)[:candidate_pool]
+
+    diversified = mmr_select(qv, embs, top_candidates, k=k, lambda_mult=0.75)
+
+    out = []
+    for i in diversified:
         rec = chunks[int(i)]
-        out.append(
-            {
-                "score": float(sims[int(i)]),
-                "source_file": rec.get("source_file"),
-                "chunk_index": rec.get("chunk_index"),
-                "chunk_id": rec.get("chunk_id"),
-                "text": rec.get("text", ""),
-            }
-        )
+        out.append({
+            "score": float(sims[int(i)]),
+            "source_file": rec.get("source_file"),
+            "chunk_index": rec.get("chunk_index"),
+            "chunk_id": rec.get("chunk_id"),
+            "text": rec.get("text", ""),
+        })
+
+    # Keep results in descending similarity order for readability
+    out.sort(key=lambda x: x["score"], reverse=True)
     return out
 
 
