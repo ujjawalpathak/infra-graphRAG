@@ -1,0 +1,10 @@
+sources:
+  - name: k8s-hpa
+    urls:
+      - https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/
+  - name: k8s-deployments
+    urls:
+      - https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+  - name: k8s-services
+    urls:
+      - https://kubernetes.io/docs/concepts/services-networking/service/

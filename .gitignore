@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+data/raw/
+data/processed/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+
+# Optional: uncomment if you add later
+# *.log
+# .cursor/
