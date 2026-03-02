@@ -1,0 +1,164 @@
+✅ Phase 10C: Hybrid Retrieval (Vector + BM25)
+What you’re building in this phase
+
+Instead of ranking chunks only by vector similarity, you’ll compute:
+
+Vector score (semantic meaning)
+
+BM25 score (keyword relevance)
+
+Hybrid score = weighted combination
+
+This fixes broad queries like “what does X need to work” where keywords matter.
+
+Step 1 — Add BM25 data structures + imports
+
+Open apps/api/main.py
+
+Add imports near the top:
+import math
+from collections import Counter, defaultdict
+Add BM25 globals near your other globals:
+bm25_doc_freq = defaultdict(int)   # term -> number of docs containing term
+bm25_doc_len = []                  # doc length in tokens
+bm25_tf = []                       # term frequency per doc (Counter)
+bm25_avgdl = 0.0
+Step 2 — Add tokenizer + BM25 build/scoring functions
+
+Add these helper functions somewhere near your other helpers:
+
+def tokenize(text: str) -> list[str]:
+    # Simple, explainable tokenizer
+    return re.findall(r"[a-zA-Z0-9_]{2,}", text.lower())
+
+
+def build_bm25() -> None:
+    global bm25_doc_freq, bm25_doc_len, bm25_tf, bm25_avgdl
+    bm25_doc_freq = defaultdict(int)
+    bm25_doc_len = []
+    bm25_tf = []
+
+    for rec in chunks:
+        tokens = tokenize(rec["text"])
+        bm25_doc_len.append(len(tokens))
+        tf = Counter(tokens)
+        bm25_tf.append(tf)
+        for t in tf.keys():
+            bm25_doc_freq[t] += 1
+
+    bm25_avgdl = sum(bm25_doc_len) / max(1, len(bm25_doc_len))
+
+
+def bm25_scores(query: str, k1: float = 1.5, b: float = 0.75) -> np.ndarray:
+    N = len(chunks)
+    q_tokens = tokenize(query)
+    scores = np.zeros(N, dtype="float32")
+
+    for i in range(N):
+        dl = bm25_doc_len[i] or 1
+        tf = bm25_tf[i]
+        score = 0.0
+
+        for t in q_tokens:
+            df = bm25_doc_freq.get(t, 0)
+            if df == 0:
+                continue
+
+            # IDF with BM25 smoothing
+            idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
+            f = tf.get(t, 0)
+
+            denom = f + k1 * (1 - b + b * (dl / (bm25_avgdl + 1e-9)))
+            score += idf * ((f * (k1 + 1)) / (denom + 1e-9))
+
+        scores[i] = score
+
+    return scores
+
+
+def normalize_minmax(arr: np.ndarray) -> np.ndarray:
+    mn, mx = float(arr.min()), float(arr.max())
+    if mx - mn < 1e-9:
+        return np.zeros_like(arr)
+    return (arr - mn) / (mx - mn)
+Step 3 — Call build_bm25() during startup
+
+In your startup() function (after chunks/embeddings are loaded), add:
+
+build_bm25()
+
+So startup becomes conceptually:
+
+load chunks
+
+build embeddings
+
+build BM25 index
+
+Step 4 — Update retrieve() to use HYBRID score
+
+Replace your current retrieve() with this hybrid version:
+
+def retrieve(query: str, k: int = 5) -> List[Dict[str, Any]]:
+    if embs is None:
+        raise RuntimeError("Embeddings not loaded (embs is None).")
+
+    # Vector similarity
+    qv = np.asarray(model.encode(query), dtype="float32")
+    vec = cosine_similarities(embs, qv)          # can be negative..positive
+    vec_n = normalize_minmax(vec)
+
+    # BM25 keyword relevance
+    bm = bm25_scores(query)
+    bm_n = normalize_minmax(bm)
+
+    # Weighted hybrid score (tune alpha later)
+    alpha = 0.65  # 65% vector, 35% keyword
+    hybrid = alpha * vec_n + (1 - alpha) * bm_n
+
+    # Get top candidates by hybrid score
+    candidate_pool = 50
+    top_idx = np.argsort(-hybrid)[:candidate_pool]
+
+    # For now: take top-k directly (next step can add MMR diversity on top_idx)
+    chosen = top_idx[:k]
+
+    out: List[Dict[str, Any]] = []
+    for i in chosen:
+        rec = chunks[int(i)]
+        out.append({
+            "score": float(vec[int(i)]),                 # keep cosine for confidence gating
+            "hybrid_score": float(hybrid[int(i)]),       # ranking score
+            "bm25": float(bm[int(i)]),                   # debug
+            "source_file": rec.get("source_file"),
+            "chunk_index": rec.get("chunk_index"),
+            "chunk_id": rec.get("chunk_id"),
+            "text": rec.get("text", ""),
+        })
+
+    out.sort(key=lambda x: x["hybrid_score"], reverse=True)
+    return out
+
+Important:
+
+Keep score = cosine similarity for your “refuse if weak evidence” gate.
+
+Use hybrid_score for ranking.
+
+Step 5 — Restart and test
+
+Restart server:
+
+uvicorn apps.api.main:app --reload
+
+Test the “broad requirement” query that previously struggled:
+
+curl -X POST http://127.0.0.1:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"q":"What does HPA need to work in a cluster?", "k": 5}'
+
+Also test a keyword-heavy query:
+
+curl -X POST http://127.0.0.1:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"q":"averageUtilization resource requests cpu", "k": 5}'

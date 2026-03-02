@@ -2,9 +2,85 @@
 10A - 
 I did till step 7 and got overlap explanation. Now before forward I want to first understand the step 7 in, how are we converting chunks into vectors, what value are we assigning and then how are we comparing and using cosine. I do not have any clue of that
 
-10B - MMR
+###########################10B - MMR###########################
 
 curl -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{"q":"What does HPA need to work in a cluster?", "k": 5}'
 {"query":"What does HPA need to work in a cluster?","results":[{"score":0.5324152112007141,"source_file":"k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt","chunk_index":26,"text_preview":"Note:\nSince the resource usages of all the containers are summed up the total pod utilization may not\naccurately represent the individual container resource usage. This could lead to situations where\na single container might be running with high usage and the HPA will not scale out because the overall\npod usage is still within acceptable limits."},{"score":0.4732435643672943,"source_file":"k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt","chunk_index":36,"text_preview":"The\ntolerance\nfield configures a threshold for metric variations, preventing the\nautoscaler from scaling for changes below that value.\nThis tolerance is defined as the amount of variation around the desired metric value under\nwhich no scaling will occur. For example, consider a HorizontalPodAutoscaler configured\nwith a target memory consumption of 100MiB and a scale-up tolerance of 5%:\nbehavior\n:\n"},{"score":0.4614937901496887,"source_file":"k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt","chunk_index":31,"text_preview":"It may be provided by the custom metrics adapters provided above.\nFor more information on these different metrics paths and how they differ please see the relevant design proposals for\nthe HPA V2\n,\ncustom.metrics.k8s.io\nand\nexternal.metrics.k8s.io\n."},{"score":0.42611491680145264,"source_file":"k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt","chunk_index":41,"text_preview":"You can implicitly deactivate the HPA for a target without the\nneed to change the HPA configuration itself. If the target's desired replica count\nis set to 0, and the HPA's minimum replica count is greater than 0, the HPA\nstops adjusting the target (and sets the"},{"score":0.32975777983665466,"source_file":"k8s-services__kubernetes.io_docs_concepts_services-networking_service_.txt","chunk_index":27,"text_preview":"SCTP to match the protocol of the Service). Every node in the cluster configures\nitself to listen on that assigned port and to forward traffic to one of the ready\nendpoints associated with that Service. You'll be able to contact the\ntype: NodePort\nService, from outside the cluster, by connecting to any node using the appropriate\nprotocol (for example: TCP), and the appropriate port (as assigned to"}]}
+
+###########################10C - BM25###########################
+
+{
+  "query": "What does HPA need to work in a cluster?",
+  "results": [
+    {
+      "score": 0.42611491680145264,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 41,
+      "text_preview": "You can implicitly deactivate the HPA for a target without the\nneed to change the HPA configuration itself. If the target's desired replica count\nis set to 0, and the HPA's minimum replica count is greater than 0, the HPA\nstops adjusting the target (and sets the"
+    },
+    {
+      "score": 0.30454298853874207,
+      "source_file": "k8s-services__kubernetes.io_docs_concepts_services-networking_service_.txt",
+      "chunk_index": 44,
+      "text_preview": "Sometimes you don't need load-balancing and a single Service IP. In\nthis case, you can create what are termed\nheadless Services\n, by explicitly\nspecifying\n\"None\"\nfor the cluster IP address (\n.spec.clusterIP\n).\nYou can use a headless Service to interface with other service discovery mechanisms,\nwithout being tied to Kubernetes' implementation."
+    },
+    {
+      "score": 0.507048487663269,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 25,
+      "text_preview": "Utilization\naverageUtilization\n:\n60\nWith this metric the HPA controller will keep the average utilization of the pods in the scaling\ntarget at 60%. Utilization is the ratio between the current usage of resource to the requested\nresources of the pod. See"
+    },
+    {
+      "score": 0.5324152112007141,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 26,
+      "text_preview": "Note:\nSince the resource usages of all the containers are summed up the total pod utilization may not\naccurately represent the individual container resource usage. This could lead to situations where\na single container might be running with high usage and the HPA will not scale out because the overall\npod usage is still within acceptable limits."
+    },
+    {
+      "score": 0.4849994480609894,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 42,
+      "text_preview": "When an HPA is enabled, it is recommended that the value of\nspec.replicas\nof\nthe Deployment and / or StatefulSet be removed from their\nmanifest(s)\n. If this isn't done, any time\na change to that object is applied, for example via\nkubectl apply -f deployment.yaml\n, this will instruct Kubernetes to scale the current number of Pods\nto the value of the\nspec.replicas\nkey. This may not be\ndesired and co"
+    }
+  ]
+}
+
+
+{
+  "query": "averageUtilization HPA cpu resource requests",
+  "results": [
+    {
+      "score": 0.6889231204986572,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 25,
+      "text_preview": "Utilization\naverageUtilization\n:\n60\nWith this metric the HPA controller will keep the average utilization of the pods in the scaling\ntarget at 60%. Utilization is the ratio between the current usage of resource to the requested\nresources of the pod. See"
+    },
+    {
+      "score": 0.5391350984573364,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 24,
+      "text_preview": "When defining the pod specification the resource requests like\ncpu\nand\nmemory\nshould\nbe specified. This is used to determine the resource utilization and used by the HPA controller\nto scale the target up or down. To use resource utilization based scaling specify a metric source\nlike this:\ntype\n:"
+    },
+    {
+      "score": 0.5715574622154236,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 26,
+      "text_preview": "Note:\nSince the resource usages of all the containers are summed up the total pod utilization may not\naccurately represent the individual container resource usage. This could lead to situations where\na single container might be running with high usage and the HPA will not scale out because the overall\npod usage is still within acceptable limits."
+    },
+    {
+      "score": 0.5265522003173828,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 20,
+      "text_preview": "This command line option helps\nexclude misleading high CPU usage\nfrom initializing Pods (for example: Java apps warming up) in HPA scaling decisions.\n--horizontal-pod-autoscaler-initial-readiness-delay\n(default: 30 seconds)\nThis defines a short delay period after a Pod starts during which the HPA controller treats Pods that are currently"
+    },
+    {
+      "score": 0.49409621953964233,
+      "source_file": "k8s-hpa__kubernetes.io_docs_tasks_run-application_horizontal-pod-autoscale_.txt",
+      "chunk_index": 19,
+      "text_preview": "Pod readiness and autoscaling metrics\nThe HorizontalPodAutoscaler (HPA) controller includes two command line options that influence how CPU metrics are collected from Pods during startup:\n--horizontal-pod-autoscaler-cpu-initialization-period\n(default: 5 minutes)"
+    }
+  ]
+}
+

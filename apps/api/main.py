@@ -30,6 +30,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
+import math
+from collections import Counter, defaultdict
+
+bm25_doc_freq = defaultdict(int)   # term -> #docs containing term
+bm25_doc_len = []                  # list[int] doc lengths
+bm25_tf = []                       # list[Counter] per doc
+bm25_avgdl = 0.0
+
 
 # Load .env if present (safe even if missing)
 load_dotenv()
@@ -91,6 +99,7 @@ def load_chunks_and_embeddings() -> None:
 @app.on_event("startup")
 def startup() -> None:
     load_chunks_and_embeddings()
+    build_bm25()
 
 
 # -----------------------------
@@ -152,32 +161,88 @@ def mmr_select(query_vec: np.ndarray, doc_vecs: np.ndarray, top_indices: np.ndar
 
     return selected
 
-def retrieve(query: str, k: int = 5) -> List[Dict[str, Any]]:
+def tokenize(text: str) -> list[str]:
+    return re.findall(r"[a-zA-Z0-9_]{2,}", text.lower())
+
+def build_bm25():
+    global bm25_doc_freq, bm25_doc_len, bm25_tf, bm25_avgdl
+    bm25_doc_freq = defaultdict(int)
+    bm25_doc_len = []
+    bm25_tf = []
+
+    for rec in chunks:
+        tokens = tokenize(rec["text"])
+        bm25_doc_len.append(len(tokens))
+        tf = Counter(tokens)
+        bm25_tf.append(tf)
+        for t in tf.keys():
+            bm25_doc_freq[t] += 1
+
+    bm25_avgdl = sum(bm25_doc_len) / max(1, len(bm25_doc_len))
+
+def bm25_scores(query: str, k1: float = 1.5, b: float = 0.75) -> np.ndarray:
+    N = len(chunks)
+    q_tokens = tokenize(query)
+    scores = np.zeros(N, dtype="float32")
+
+    for i in range(N):
+        dl = bm25_doc_len[i] or 1
+        tf = bm25_tf[i]
+        score = 0.0
+        for t in q_tokens:
+            df = bm25_doc_freq.get(t, 0)
+            if df == 0:
+                continue
+            idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
+            f = tf.get(t, 0)
+            denom = f + k1 * (1 - b + b * (dl / (bm25_avgdl + 1e-9)))
+            score += idf * ((f * (k1 + 1)) / (denom + 1e-9))
+        scores[i] = score
+    return scores
+
+def normalize(arr: np.ndarray) -> np.ndarray:
+    # min-max normalize to [0,1]
+    mn, mx = float(arr.min()), float(arr.max())
+    if mx - mn < 1e-9:
+        return np.zeros_like(arr)
+    return (arr - mn) / (mx - mn)
+
+def retrieve(query: str, k: int = 5) -> list[dict]:
     if embs is None:
-        raise RuntimeError("Embeddings not loaded (embs is None).")
+        raise RuntimeError("Embeddings not loaded.")
 
     qv = np.asarray(model.encode(query), dtype="float32")
-    sims = cosine_similarities(embs, qv)
+    vec = cosine_similarities(embs, qv)  # can be negative to positive
+    vec_n = normalize(vec)
 
-    # Instead of taking top-k directly, take a bigger candidate pool then diversify
-    candidate_pool = 40
-    top_candidates = np.argsort(-sims)[:candidate_pool]
+    bm = bm25_scores(query)
+    bm_n = normalize(bm)
 
-    diversified = mmr_select(qv, embs, top_candidates, k=k, lambda_mult=0.75)
+    # Weighted hybrid score
+    alpha = 0.65  # vector weight
+    hybrid = alpha * vec_n + (1 - alpha) * bm_n
+
+    # Candidate pool then pick top-k
+    candidate_pool = 50
+    top_idx = np.argsort(-hybrid)[:candidate_pool]
+
+    # Optional: MMR on original embeddings for diversity
+    diversified = top_idx[:k]  # keep simple first; we can plug MMR here next
 
     out = []
     for i in diversified:
         rec = chunks[int(i)]
         out.append({
-            "score": float(sims[int(i)]),
-            "source_file": rec.get("source_file"),
-            "chunk_index": rec.get("chunk_index"),
+            "score": float(vec[int(i)]),              # keep vector score for gating transparency
+            "hybrid_score": float(hybrid[int(i)]),    # ranking score
+            "bm25": float(bm[int(i)]),
+            "source_file": rec["source_file"],
+            "chunk_index": rec["chunk_index"],
             "chunk_id": rec.get("chunk_id"),
-            "text": rec.get("text", ""),
+            "text": rec["text"],
         })
 
-    # Keep results in descending similarity order for readability
-    out.sort(key=lambda x: x["score"], reverse=True)
+    out.sort(key=lambda x: x["hybrid_score"], reverse=True)
     return out
 
 
